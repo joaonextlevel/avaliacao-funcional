@@ -241,7 +241,7 @@ let D = {}; // data object
 let clientList = [];
 
 const KEYS = [
-  "nome","dob","idade","contacto","avaliador","medico","data_aval",
+  "nome","dob","idade","sexo","contacto","avaliador","medico","data_aval",
   "patologias","medicacao","cirurgias","atividade","objetivo","limitacoes",
   "peso","altura","imc","gordura","muscular","perimetro","racio","pa","fc_rep",
   "grip_d1","grip_d2","grip_d3","grip_nd","grip_final",
@@ -363,37 +363,200 @@ function onInput(key, val) {
   updateBanner();
 }
 
+function setCalc(key, val) {
+  D[key] = val;
+  const el = document.getElementById("f_" + key);
+  if (el) el.value = val;
+}
+
 function autoCalc(changed) {
+  // ── Composição ─────────────────────────────────────
   const p = parseFloat(D.peso), h = parseFloat(D.altura)/100;
-  if (["peso","altura"].includes(changed) && p > 0 && h > 0) {
-    D.imc = (p/(h*h)).toFixed(1);
-    const el = document.getElementById("f_imc");
-    if (el) el.value = D.imc;
-  }
+  if (["peso","altura"].includes(changed) && p > 0 && h > 0)
+    setCalc("imc", (p/(h*h)).toFixed(1));
+
   if (["perimetro","altura"].includes(changed)) {
     const c = parseFloat(D.perimetro), ht = parseFloat(D.altura);
-    if (c > 0 && ht > 0) {
-      D.racio = (c/ht).toFixed(2);
-      const el = document.getElementById("f_racio");
-      if (el) el.value = D.racio;
-    }
+    if (c > 0 && ht > 0) setCalc("racio", (c/ht).toFixed(2));
   }
+
+  // ── Grip ───────────────────────────────────────────
   if (["grip_d1","grip_d2","grip_d3"].includes(changed)) {
     const vals = [D.grip_d1, D.grip_d2, D.grip_d3].map(parseFloat).filter(v => !isNaN(v));
-    if (vals.length) {
-      D.grip_final = Math.max(...vals).toFixed(1);
-      const el = document.getElementById("f_grip_final");
-      if (el) el.value = D.grip_final;
+    if (vals.length) setCalc("grip_final", Math.max(...vals).toFixed(1));
+  }
+
+  // ── SLS final (melhor de cada pé) ─────────────────
+  if (["sls_d1","sls_d2","sls_e1","sls_e2"].includes(changed)) {
+    const bestD = Math.max(...[D.sls_d1,D.sls_d2].map(parseFloat).filter(v=>!isNaN(v)), 0);
+    const bestE = Math.max(...[D.sls_e1,D.sls_e2].map(parseFloat).filter(v=>!isNaN(v)), 0);
+    if (bestD > 0 || bestE > 0) setCalc("sls_final", "D: " + (bestD||"—") + "s  |  E: " + (bestE||"—") + "s");
+  }
+  if (["milha_tempo","milha_fc","peso","idade","sexo"].includes(changed)) {
+    const tempo = D.milha_tempo; // formato min:seg ou minutos decimais
+    const fc = parseFloat(D.milha_fc);
+    const peso = parseFloat(D.peso);
+    const idade = parseFloat(D.idade);
+    const sexo = D.sexo === "Masculino" ? 1 : (D.sexo === "Feminino" ? 0 : null);
+    if (tempo && !isNaN(fc) && !isNaN(peso) && !isNaN(idade) && sexo !== null) {
+      // Converter tempo para minutos decimais
+      let tMin;
+      if (tempo.includes(":")) {
+        const parts = tempo.split(":");
+        tMin = parseFloat(parts[0]) + parseFloat(parts[1]||0)/60;
+      } else {
+        tMin = parseFloat(tempo);
+      }
+      if (!isNaN(tMin) && tMin > 0) {
+        const vo2 = 132.853 - (0.1692 * peso) - (0.3877 * idade) + (6.315 * sexo) - (3.2649 * tMin) - (0.1565 * fc);
+        D.milha_vo2 = vo2.toFixed(1);
+        const elvo2 = document.getElementById("f_milha_vo2");
+        if (elvo2) elvo2.value = D.milha_vo2;
+      }
     }
   }
+  // ── SAR total ──────────────────────────────────────
   if (["sar_sentar","sar_levantar"].includes(changed)) {
     const s = parseFloat(D.sar_sentar), l = parseFloat(D.sar_levantar);
-    if (!isNaN(s) && !isNaN(l)) {
-      D.sar_total = (s+l).toFixed(1);
-      const el = document.getElementById("f_sar_total");
-      if (el) el.value = D.sar_total;
+    if (!isNaN(s) && !isNaN(l)) setCalc("sar_total", (s+l).toFixed(1));
+  }
+
+  // ── VO2max (Teste da Milha) ────────────────────────
+  const tempoRaw = D.milha_tempo;
+  const fcMilha = parseFloat(D.milha_fc);
+  const pesoF = parseFloat(D.peso);
+  const idadeF = parseFloat(D.idade);
+  const sexoNum = D.sexo === "Masculino" ? 1 : (D.sexo === "Feminino" ? 0 : null);
+  if (["milha_tempo","milha_fc","peso","idade","sexo"].includes(changed) &&
+      tempoRaw && !isNaN(fcMilha) && !isNaN(pesoF) && !isNaN(idadeF) && sexoNum !== null) {
+    let tMin;
+    if (tempoRaw.includes(":")) {
+      const parts = tempoRaw.split(":");
+      tMin = parseFloat(parts[0]) + parseFloat(parts[1]||0)/60;
+    } else { tMin = parseFloat(tempoRaw); }
+    if (!isNaN(tMin) && tMin > 0) {
+      const vo2 = 132.853 - (0.1692*pesoF) - (0.3877*idadeF) + (6.315*sexoNum) - (3.2649*tMin) - (0.1565*fcMilha);
+      setCalc("milha_vo2", vo2.toFixed(1));
     }
   }
+
+  // ── Auto-classificações ────────────────────────────
+  const idade = parseInt(D.idade);
+  const isH = D.sexo === "Masculino";
+  const ag = getAgeGroup(idade);
+
+  if (ag) {
+    // Composição Corporal — baseada no rácio cintura/altura
+    if (["racio","perimetro","altura","gordura","sexo","idade"].includes(changed)) {
+      const r = parseFloat(D.racio);
+      const gord = parseFloat(D.gordura);
+      let scores = [];
+      if (!isNaN(r)) {
+        if (r < 0.50) scores.push(4);
+        else if (r < 0.60) scores.push(2);
+        else scores.push(1);
+      }
+      if (!isNaN(gord)) {
+        const gordRefs = {
+          "40": isH ? [22,27] : [32,37],
+          "50": isH ? [25,30] : [35,40],
+          "60": isH ? [27,32] : [35,40],
+        };
+        const [g1,g2] = gordRefs[ag];
+        if (gord < g1) scores.push(4);
+        else if (gord < g2) scores.push(2);
+        else scores.push(1);
+      }
+      if (scores.length) {
+        const avg = scores.reduce((a,b)=>a+b,0)/scores.length;
+        D.res_comp = avg >= 3.5 ? "Excelente" : avg >= 2.5 ? "Bom" : avg >= 1.5 ? "Médio" : "Abaixo";
+      }
+    }
+
+    // Grip
+    if (["grip_d1","grip_d2","grip_d3","idade","sexo"].includes(changed)) {
+      const g = parseFloat(D.grip_final);
+      if (!isNaN(g)) D.res_grip = classifyGrip(g, idade, isH) || D.res_grip;
+    }
+
+    // Chair Stand
+    if (["chair_reps","idade","sexo"].includes(changed)) {
+      const r = parseInt(D.chair_reps);
+      if (!isNaN(r)) D.res_chair = classifyChair(r, idade, isH) || D.res_chair;
+    }
+
+    // VO2max
+    if (["milha_vo2","milha_tempo","milha_fc","peso","idade","sexo"].includes(changed)) {
+      const v = parseFloat(D.milha_vo2);
+      if (!isNaN(v)) D.res_vo2 = classifyVO2(v, idade, isH) || D.res_vo2;
+    }
+
+    // Single Leg Stance — usa o pé mais fraco
+    if (["sls_d1","sls_d2","sls_e1","sls_e2","idade"].includes(changed)) {
+      const bestD = Math.max(...[D.sls_d1,D.sls_d2].map(parseFloat).filter(v=>!isNaN(v)), 0);
+      const bestE = Math.max(...[D.sls_e1,D.sls_e2].map(parseFloat).filter(v=>!isNaN(v)), 0);
+      const worst = Math.min(bestD||999, bestE||999);
+      if (worst < 999) D.res_sls = classifySLS(worst, idade) || D.res_sls;
+    }
+
+    // Sit & Rise
+    if (["sar_sentar","sar_levantar","sar_total"].includes(changed)) {
+      const t = parseFloat(D.sar_total);
+      if (!isNaN(t)) D.res_sar = classifySAR(t) || D.res_sar;
+    }
+  }
+
+  // Auto-prioridades (Abaixo→Alta, Médio→Média, Bom/Excelente→Baixa)
+  const classMap = [
+    ["res_comp","res_comp_p"],["res_grip","res_grip_p"],["res_chair","res_chair_p"],
+    ["res_vo2","res_vo2_p"],["res_sls","res_sls_p"],["res_sar","res_sar_p"],
+  ];
+  classMap.forEach(([ck,pk]) => {
+    if (D[ck] && !["res_mob_p"].includes(pk)) {
+      if (D[ck] === "Abaixo") D[pk] = "Alta";
+      else if (D[ck] === "Médio") D[pk] = D[pk] || "Média";
+      else if (["Bom","Excelente"].includes(D[ck])) D[pk] = D[pk] || "Baixa";
+    }
+  });
+}
+
+function getAgeGroup(age) {
+  if (age >= 40 && age <= 49) return "40";
+  if (age >= 50 && age <= 59) return "50";
+  if (age >= 60 && age <= 69) return "60";
+  return null;
+}
+
+function classifyGrip(val, age, isH) {
+  const g = getAgeGroup(age); if (!g) return null;
+  const refs = { "40": isH?[44,35]:[27,22], "50": isH?[40,32]:[25,20], "60": isH?[37,27]:[23,16] };
+  const [bom, atencao] = refs[g];
+  return val >= bom ? "Bom" : val >= atencao ? "Médio" : "Abaixo";
+}
+
+function classifyChair(val, age, isH) {
+  const g = getAgeGroup(age); if (!g) return null;
+  const refs = { "40": isH?[16,13]:[15,12], "50": isH?[14,11]:[13,10], "60": isH?[12,9]:[11,8] };
+  const [bom, medio] = refs[g];
+  return val >= bom ? "Bom" : val >= medio ? "Médio" : "Abaixo";
+}
+
+function classifyVO2(val, age, isH) {
+  const g = getAgeGroup(age); if (!g) return null;
+  const refs = { "40": isH?[46,39,33]:[39,32,26], "50": isH?[43,36,30]:[36,29,24], "60": isH?[38,31,25]:[32,26,21] };
+  const [exc,bom,medio] = refs[g];
+  return val > exc ? "Excelente" : val >= bom ? "Bom" : val >= medio ? "Médio" : "Abaixo";
+}
+
+function classifySLS(val, age) {
+  const g = getAgeGroup(age); if (!g) return null;
+  const refs = { "40": [28,16,8], "50": [20,10,4], "60": [12,6,2] };
+  const [exc,bom,atencao] = refs[g];
+  return val > exc ? "Excelente" : val >= bom ? "Bom" : val >= atencao ? "Médio" : "Abaixo";
+}
+
+function classifySAR(val) {
+  return val >= 8 ? "Excelente" : val >= 6 ? "Bom" : val >= 4 ? "Médio" : "Abaixo";
 }
 
 function syncFormToData() {
@@ -424,6 +587,7 @@ function sectionHTML(i) {
           <div class="row">
             ${f("Data de Nascimento","dob",{type:"date"})}
             ${f("Idade","idade",{hint:"anos"})}
+            ${sel("Sexo","sexo",["Masculino","Feminino"])}
             ${f("Data da Avaliação","data_aval",{type:"date"})}
           </div>
           <div class="row">
@@ -536,7 +700,7 @@ function sectionHTML(i) {
             ${f("FC no Final (bpm)","milha_fc",{type:"number"})}
           </div>
           <div class="row">
-            ${f("VO2max Estimado (ml/kg/min)","milha_vo2")}
+            ${f("VO2max Estimado (ml/kg/min)","milha_vo2",{hint:"calculado automaticamente",readOnly:true})}
             ${f("Percentil para a Idade","milha_pct")}
           </div>
           <div class="info-box">
@@ -567,7 +731,7 @@ function sectionHTML(i) {
             ${f("Pé Esq. — T1 (seg)","sls_e1",{type:"number"})}
             ${f("Pé Esq. — T2 (seg)","sls_e2",{type:"number"})}
           </div>
-          <div class="row">${f("Resultado Final (melhor de cada pé)","sls_final",{full:true})}</div>
+          <div class="row">${f("Resultado Final","sls_final",{hint:"calculado automaticamente",readOnly:true,full:true})}</div>
           <table class="ref-table">
             <tr><th>Idade</th><th>Excelente</th><th>Bom</th><th>Atenção</th><th>Alerta</th></tr>
             <tr><td>40–49</td><td class="exc">&gt; 28s</td><td class="good">16–28s</td><td class="warn">8–15s</td><td class="bad">&lt; 8s</td></tr>
