@@ -212,8 +212,7 @@
     <span>Avaliação Funcional</span>
   </div>
   <div class="actions">
-    <span id="sync-indicator" style="display:none" class="sync-status sync-ok">↑ Sync</span>
-    <button class="btn btn-ghost" onclick="openSettings()">⚙</button>
+    <span id="sync-indicator" style="display:none" class="sync-status sync-ok">☁</span>
     <button class="btn btn-ghost" onclick="toggleDrawer()">Fichas</button>
     <button class="btn btn-ghost" onclick="newEval()">+ Nova</button>
     <button class="btn btn-primary" id="btn-save" onclick="saveData()">Guardar</button>
@@ -254,6 +253,7 @@
 <!-- FOOTER -->
 <div id="footer">
   <button class="btn btn-ghost" id="btn-prev" onclick="navigate(-1)">← Anterior</button>
+  <button class="btn btn-ghost" onclick="openSettings()" style="font-size:16px;padding:7px 12px">⚙</button>
   <span class="progress" id="progress-label">1 / 9</span>
   <button class="btn btn-primary" id="btn-next" onclick="navigate(1)">Seguinte →</button>
 </div>
