@@ -169,6 +169,29 @@
   .client-item span { font-size: 11px; color: var(--muted); display: block; margin-top: 2px; }
   .client-item:active { background: #2A2A2A; }
 
+  /* ── MODAL ── */
+  #modal-overlay {
+    position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,0.85);
+    display: none; align-items: center; justify-content: center; padding: 16px;
+  }
+  #modal-overlay.open { display: flex; }
+  #modal-box {
+    background: var(--card); border-radius: 14px; width: 100%; max-width: 480px;
+    overflow: hidden; border: 1px solid var(--border);
+  }
+  #modal-box .modal-header {
+    background: var(--black); padding: 12px 16px;
+    border-bottom: 2px solid var(--orange);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #modal-box .modal-header h3 { font-size: 11px; font-weight: 800; color: var(--orange); text-transform: uppercase; letter-spacing: 0.1em; }
+  #modal-box .modal-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  #modal-box .modal-footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+  .sync-status { font-size: 11px; padding: 6px 10px; border-radius: 6px; font-weight: 600; }
+  .sync-ok { background: #1B5E20; color: #66BB6A; }
+  .sync-err { background: #3D1010; color: #EF9A9A; }
+  .sync-ing { background: #1A1A2E; color: #90CAF9; }
+
   /* ── FOOTER NOTE ── */
   .footer-note { background: var(--card); border-radius: 10px; padding: 12px 14px; text-align: center; }
   .footer-note p { font-size: 10px; color: var(--muted2); line-height: 1.5; }
@@ -189,6 +212,8 @@
     <span>Avaliação Funcional</span>
   </div>
   <div class="actions">
+    <span id="sync-indicator" style="display:none" class="sync-status sync-ok">↑ Sync</span>
+    <button class="btn btn-ghost" onclick="openSettings()">⚙</button>
     <button class="btn btn-ghost" onclick="toggleDrawer()">Fichas</button>
     <button class="btn btn-ghost" onclick="newEval()">+ Nova</button>
     <button class="btn btn-primary" id="btn-save" onclick="saveData()">Guardar</button>
@@ -233,7 +258,169 @@
   <button class="btn btn-primary" id="btn-next" onclick="navigate(1)">Seguinte →</button>
 </div>
 
+<!-- SETTINGS MODAL -->
+<div id="modal-overlay">
+  <div id="modal-box">
+    <div class="modal-header">
+      <h3>⚙ Configuração Supabase</h3>
+      <button onclick="closeSettings()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="info-box">
+        <p><strong>Como obter as credenciais:</strong><br>
+        Supabase → Settings → API → copia o <em>Project URL</em> e a <em>anon public key</em></p>
+      </div>
+      <div class="field full">
+        <label>Project URL</label>
+        <input type="url" id="cfg-url" placeholder="https://xyzxyz.supabase.co">
+      </div>
+      <div class="field full">
+        <label>Anon Public Key</label>
+        <textarea id="cfg-key" rows="3" placeholder="eyJhbGci..."></textarea>
+      </div>
+      <div id="cfg-status" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSettings()">Cancelar</button>
+      <button class="btn btn-ghost" onclick="testConnection()">Testar ligação</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <script>
+// ── SUPABASE ──────────────────────────────────────────
+let SB_URL = localStorage.getItem("nl_sb_url") || "";
+let SB_KEY = localStorage.getItem("nl_sb_key") || "";
+const SB_TABLE = "avaliacoes";
+
+function sbHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "apikey": SB_KEY,
+    "Authorization": "Bearer " + SB_KEY,
+    "Prefer": "resolution=merge-duplicates"
+  };
+}
+
+async function sbSave(data) {
+  if (!SB_URL || !SB_KEY) return false;
+  try {
+    showSyncStatus("ing");
+    const payload = {
+      nome: data.nome || "Sem nome",
+      data_aval: data.data_aval || "",
+      updated_at: new Date().toISOString(),
+      dados: data
+    };
+    // Upsert by nome + data_aval
+    const r = await fetch(`${SB_URL}/rest/v1/${SB_TABLE}?nome=eq.${encodeURIComponent(payload.nome)}&data_aval=eq.${encodeURIComponent(payload.data_aval)}`, {
+      method: "GET", headers: sbHeaders()
+    });
+    const existing = await r.json();
+    let resp;
+    if (existing && existing.length > 0) {
+      resp = await fetch(`${SB_URL}/rest/v1/${SB_TABLE}?id=eq.${existing[0].id}`, {
+        method: "PATCH", headers: sbHeaders(), body: JSON.stringify(payload)
+      });
+    } else {
+      resp = await fetch(`${SB_URL}/rest/v1/${SB_TABLE}`, {
+        method: "POST", headers: { ...sbHeaders(), "Prefer": "return=minimal" },
+        body: JSON.stringify(payload)
+      });
+    }
+    showSyncStatus(resp.ok ? "ok" : "err");
+    return resp.ok;
+  } catch(e) { showSyncStatus("err"); return false; }
+}
+
+async function sbLoadAll() {
+  if (!SB_URL || !SB_KEY) return [];
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/${SB_TABLE}?select=id,nome,data_aval,updated_at&order=updated_at.desc`, {
+      headers: sbHeaders()
+    });
+    if (!r.ok) return [];
+    return await r.json();
+  } catch(e) { return []; }
+}
+
+async function sbLoadOne(id) {
+  if (!SB_URL || !SB_KEY) return null;
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/${SB_TABLE}?id=eq.${id}&select=dados`, {
+      headers: sbHeaders()
+    });
+    const rows = await r.json();
+    return rows && rows[0] ? rows[0].dados : null;
+  } catch(e) { return null; }
+}
+
+function showSyncStatus(state) {
+  const el = document.getElementById("sync-indicator");
+  if (!SB_URL || !SB_KEY) { el.style.display = "none"; return; }
+  el.style.display = "inline-block";
+  if (state === "ok")  { el.className = "sync-status sync-ok";  el.textContent = "✓ Sync"; }
+  if (state === "err") { el.className = "sync-status sync-err"; el.textContent = "✗ Erro"; }
+  if (state === "ing") { el.className = "sync-status sync-ing"; el.textContent = "⟳ Sync..."; }
+}
+
+function openSettings() {
+  document.getElementById("cfg-url").value = SB_URL;
+  document.getElementById("cfg-key").value = SB_KEY;
+  document.getElementById("cfg-status").style.display = "none";
+  document.getElementById("modal-overlay").classList.add("open");
+}
+function closeSettings() {
+  document.getElementById("modal-overlay").classList.remove("open");
+}
+function saveSettings() {
+  SB_URL = document.getElementById("cfg-url").value.trim().replace(/\/$/, "");
+  SB_KEY = document.getElementById("cfg-key").value.trim();
+  localStorage.setItem("nl_sb_url", SB_URL);
+  localStorage.setItem("nl_sb_key", SB_KEY);
+  showSyncStatus(SB_URL && SB_KEY ? "ok" : "err");
+  closeSettings();
+  loadClientListFromCloud();
+}
+async function testConnection() {
+  const url = document.getElementById("cfg-url").value.trim().replace(/\/$/, "");
+  const key = document.getElementById("cfg-key").value.trim();
+  const statusEl = document.getElementById("cfg-status");
+  statusEl.style.display = "block";
+  statusEl.className = "sync-status sync-ing";
+  statusEl.textContent = "A testar ligação...";
+  try {
+    const r = await fetch(`${url}/rest/v1/${SB_TABLE}?limit=1`, {
+      headers: { "apikey": key, "Authorization": "Bearer " + key }
+    });
+    if (r.ok) {
+      statusEl.className = "sync-status sync-ok";
+      statusEl.textContent = "✓ Ligação bem sucedida!";
+    } else {
+      statusEl.className = "sync-status sync-err";
+      statusEl.textContent = "✗ Erro " + r.status + " — verifica as credenciais";
+    }
+  } catch(e) {
+    statusEl.className = "sync-status sync-err";
+    statusEl.textContent = "✗ Sem ligação — verifica o URL";
+  }
+}
+
+async function loadClientListFromCloud() {
+  const rows = await sbLoadAll();
+  if (!rows.length) return;
+  const cloudList = rows.map(r => ({ key: "sb_" + r.id, nome: r.nome, data: r.data_aval, sbId: r.id, source: "cloud" }));
+  // Merge with local
+  const localKeys = clientList.map(c => c.nome + "_" + c.data);
+  cloudList.forEach(c => {
+    if (!localKeys.includes(c.nome + "_" + c.data)) clientList.push(c);
+  });
+  // Prefer cloud entries
+  clientList = cloudList.concat(clientList.filter(c => !c.source));
+  renderClientList();
+}
+
 // ── STATE ─────────────────────────────────────────────
 const SECTIONS = ["Dados","Anamnese","Composição","Força","Cardio","Equilíbrio","Mobilidade","Resumo","Plano"];
 let currentSection = 0;
@@ -265,7 +452,7 @@ function initData() { D = {}; KEYS.forEach(k => D[k] = ""); }
 // ── STORAGE ────────────────────────────────────────────
 function storageKey() { return "nl_eval_current"; }
 
-function saveData() {
+async function saveData() {
   syncFormToData();
   localStorage.setItem(storageKey(), JSON.stringify(D));
   if (D.nome) {
@@ -278,6 +465,9 @@ function saveData() {
     localStorage.setItem("nl_client_list", JSON.stringify(clientList));
   }
   const btn = document.getElementById("btn-save");
+  btn.textContent = "A guardar..."; btn.className = "btn btn-ghost";
+  // Save to Supabase
+  await sbSave(D);
   btn.textContent = "✓ Guardado"; btn.className = "btn btn-saved";
   setTimeout(() => { btn.textContent = "Guardar"; btn.className = "btn btn-primary"; }, 2000);
   updateBanner();
@@ -293,8 +483,12 @@ function loadStorage() {
   } catch {}
 }
 
-function loadClient(key) {
+async function loadClient(key, sbId) {
   try {
+    if (sbId) {
+      const data = await sbLoadOne(sbId);
+      if (data) { D = data; renderSection(); updateBanner(); closeDrawerForce(); return; }
+    }
     const raw = localStorage.getItem(key);
     if (raw) { D = JSON.parse(raw); renderSection(); updateBanner(); closeDrawerForce(); }
   } catch {}
@@ -869,10 +1063,17 @@ function renderClientList() {
     container.innerHTML = '<p style="color:#444;font-size:13px">Nenhuma ficha guardada ainda.</p>';
     return;
   }
-  container.innerHTML = clientList.slice().reverse().map(c => `
-    <button class="client-item" onclick="loadClient('${c.key}')">
+  // Deduplicate by nome+data, prefer cloud
+  const seen = new Set();
+  const deduped = clientList.filter(c => {
+    const k = c.nome + "_" + c.data;
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+  container.innerHTML = deduped.map(c => `
+    <button class="client-item" onclick="loadClient('${c.key}','${c.sbId||''}')">
       <strong>${escHtml(c.nome)}</strong>
-      <span>${c.data || "sem data"}</span>
+      <span>${c.data || "sem data"} ${c.source==="cloud" ? "☁" : ""}</span>
     </button>`).join("");
 }
 
@@ -892,6 +1093,7 @@ loadStorage();
 renderSection();
 updateBanner();
 renderClientList();
+if (SB_URL && SB_KEY) { showSyncStatus("ok"); loadClientListFromCloud(); }
 </script>
 </body>
 </html>
